@@ -15,6 +15,7 @@ declare namespace loader {
     Schema,
     Compilation,
     WorkerResult,
+    CachedResult,
     Minimizer,
     Generator,
     LoaderOptions,
@@ -23,7 +24,8 @@ declare namespace loader {
 declare var raw: boolean;
 type Schema = import("schema-utils/declarations/validate").Schema;
 type Compilation = import("webpack").Compilation;
-type WorkerResult = import("./utils").WorkerResult;
+type WorkerResult = import("./index").WorkerResult;
+type CachedResult = import("./index").CachedResult;
 /**
  * <T>
  */

@@ -1,7 +1,10 @@
 export type WorkerResult = import("./index").WorkerResult;
 export type SquooshOptions = import("./index").SquooshOptions;
 export type ImageminOptions = import("imagemin").Options;
+export type Compilation = import("webpack").Compilation;
+export type Source = import("webpack").sources.Source;
 export type WebpackError = import("webpack").WebpackError;
+export type CachedResult = WorkerResult;
 export type Task<T> = () => Promise<T>;
 export type SvgoLib = typeof import("svgo");
 export type SvgoOptions = {
@@ -57,7 +60,12 @@ export function isAbsoluteURL(url: string): boolean;
 /** @typedef {import("./index").WorkerResult} WorkerResult */
 /** @typedef {import("./index").SquooshOptions} SquooshOptions */
 /** @typedef {import("imagemin").Options} ImageminOptions */
+/** @typedef {import("webpack").Compilation} Compilation */
+/** @typedef {import("webpack").sources.Source} Source */
 /** @typedef {import("webpack").WebpackError} WebpackError */
+/**
+ * @typedef {WorkerResult} CachedResult
+ */
 /**
  * @template T
  * @typedef {() => Promise<T>} Task
@@ -69,11 +77,20 @@ export function isAbsoluteURL(url: string): boolean;
  */
 export function replaceFileExtension(filename: string, ext: string): string;
 /**
- * @template T
- * @param fn {(function(): any) | undefined}
- * @returns {function(): T}
+ * @param {string} filename
+ * @param {Source} source
+ * @param {ReturnType<Compilation["getCache"]>} cache
+ * @param {any} transformer
+ * @param {() => Promise<CachedResult>} getOutput
+ * @returns {Promise<CachedResult>}
  */
-export function memoize<T>(fn: (() => any) | undefined): () => T;
+export function provideFromCache(
+  filename: string,
+  source: Source,
+  cache: ReturnType<Compilation["getCache"]>,
+  transformer: any,
+  getOutput: () => Promise<CachedResult>,
+): Promise<CachedResult>;
 /**
  * @template T
  * @param {ImageminOptions} imageminConfig

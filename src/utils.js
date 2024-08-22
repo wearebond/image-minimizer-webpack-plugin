@@ -3,7 +3,13 @@ const path = require("path");
 /** @typedef {import("./index").WorkerResult} WorkerResult */
 /** @typedef {import("./index").SquooshOptions} SquooshOptions */
 /** @typedef {import("imagemin").Options} ImageminOptions */
+/** @typedef {import("webpack").Compilation} Compilation */
+/** @typedef {import("webpack").sources.Source} Source */
 /** @typedef {import("webpack").WebpackError} WebpackError */
+
+/**
+ * @typedef {WorkerResult} CachedResult
+ */
 
 /**
  * @template T
@@ -1289,11 +1295,60 @@ async function svgoMinify(original, minimizerOptions) {
   };
 }
 
+const getSerializeJavascript = memoize(() => require("serialize-javascript"));
+
+/** @type {Record<string, Promise<CachedResult>>} */
+const pendingCacheResultSet = {};
+
+/**
+ * @param {string} filename
+ * @param {Source} source
+ * @param {ReturnType<Compilation["getCache"]>} cache
+ * @param {any} transformer
+ * @param {() => Promise<CachedResult>} getOutput
+ * @returns {Promise<CachedResult>}
+ */
+function provideFromCache(filename, source, cache, transformer, getOutput) {
+  /** @type {string} */
+  const cacheName = getSerializeJavascript()({ filename, transformer });
+  const eTag = cache.getLazyHashedEtag(source);
+
+  if (`${cacheName}|${eTag}` in pendingCacheResultSet) {
+    return pendingCacheResultSet[`${cacheName}|${eTag}`];
+  }
+
+  pendingCacheResultSet[`${cacheName}|${eTag}`] =
+    /** @returns {Promise<CachedResult>} */ (async () => {
+      const cacheItem = cache.getItemCache(cacheName, eTag);
+
+      /** @type {CachedResult | undefined} */
+      const cacheOutput = await cacheItem.getPromise();
+
+      if (cacheOutput) {
+        return cacheOutput;
+      }
+
+      const output = await getOutput();
+
+      await cacheItem.storePromise(output);
+
+      return output;
+    })();
+
+  const result = pendingCacheResultSet[`${cacheName}|${eTag}`];
+
+  result.finally(() => {
+    delete pendingCacheResultSet[`${cacheName}|${eTag}`];
+  });
+
+  return result;
+}
+
 module.exports = {
   throttleAll,
   isAbsoluteURL,
   replaceFileExtension,
-  memoize,
+  provideFromCache,
   imageminNormalizeConfig,
   imageminMinify,
   imageminGenerate,

@@ -7,7 +7,6 @@ const worker = require("./worker");
 const schema = require("./plugin-options.json");
 const {
   throttleAll,
-  memoize,
   imageminNormalizeConfig,
   imageminMinify,
   imageminGenerate,
@@ -16,6 +15,7 @@ const {
   sharpMinify,
   sharpGenerate,
   svgoMinify,
+  provideFromCache,
 } = require("./utils.js");
 
 /** @typedef {import("schema-utils/declarations/validate").Schema} Schema */
@@ -28,6 +28,7 @@ const {
 /** @typedef {import("webpack").sources.Source} Source */
 /** @typedef {import("./utils.js").imageminMinify} ImageminMinifyFunction */
 /** @typedef {import("./utils.js").squooshMinify} SquooshMinifyFunction */
+/** @typedef {import("./utils.js").CachedResult} CachedResult */
 
 /** @typedef {RegExp | string} Rule */
 /** @typedef {Rule[] | Rule} Rules */
@@ -61,11 +62,7 @@ const {
  * @template T
  * @typedef {Object} Task
  * @property {string} name
- * @property {AssetInfo} info
- * @property {Source} inputSource
- * @property {WorkerResult & { source?: Source } | undefined} output
- * @property {ReturnType<ReturnType<Compilation["getCache"]>["getItemCache"]>} cacheItem
- * @property {Transformer<T> | Transformer<T>[]} transformer
+ * @property {() => Promise<CachedResult>} getOutput
  */
 
 /**
@@ -172,8 +169,6 @@ const {
  * @property {boolean} [deleteOriginalAssets] Allows to remove original assets. Useful for converting to a `webp` and remove original assets.
  */
 
-const getSerializeJavascript = memoize(() => require("serialize-javascript"));
-
 /**
  * @template T, [G=T]
  * @extends {WebpackPluginInstance}
@@ -276,23 +271,32 @@ class ImageMinimizerPlugin {
             /**
              * @template Z
              * @param {Transformer<Z> | Array<Transformer<Z>>} transformer
-             * @returns {Promise<Task<Z>>}
+             * @returns {Task<Z>}
              */
-            const getFromCache = async (transformer) => {
-              const cacheName = getSerializeJavascript()({ name, transformer });
-              const eTag = cache.getLazyHashedEtag(source);
-              const cacheItem = cache.getItemCache(cacheName, eTag);
-              const output = await cacheItem.getPromise();
+            const getFromCache = (transformer) => ({
+              name,
+              getOutput: () =>
+                provideFromCache(name, source, cache, transformer, () => {
+                  let input = source.source();
 
-              return {
-                name,
-                info,
-                inputSource: source,
-                output,
-                cacheItem,
-                transformer,
-              };
-            };
+                  if (!Buffer.isBuffer(input)) {
+                    input = Buffer.from(input);
+                  }
+
+                  /** @type {InternalWorkerOptions<Z>} */
+                  const minifyOptions = {
+                    filename: name,
+                    info,
+                    input,
+                    severityError: this.options.severityError,
+                    transformer,
+                    generateFilename:
+                      compilation.getAssetPath.bind(compilation),
+                  };
+
+                  return worker(minifyOptions);
+                }),
+            });
 
             /**
              * @type {Task<T | G>[]}
@@ -330,42 +334,8 @@ class ImageMinimizerPlugin {
     const { RawSource } = compiler.webpack.sources;
 
     const scheduledTasks = assetsForTransformers.map((asset) => async () => {
-      const { name, info, inputSource, cacheItem, transformer } = asset;
-      let { output } = asset;
-      let input;
-
-      const sourceFromInputSource = inputSource.source();
-
-      if (!output) {
-        input = sourceFromInputSource;
-
-        if (!Buffer.isBuffer(input)) {
-          input = Buffer.from(input);
-        }
-
-        const minifyOptions =
-          /** @type {InternalWorkerOptions<T>} */
-          ({
-            filename: name,
-            info,
-            input,
-            severityError: this.options.severityError,
-            transformer,
-            generateFilename: compilation.getAssetPath.bind(compilation),
-          });
-
-        output = await worker(minifyOptions);
-
-        output.source = new RawSource(output.data);
-
-        await cacheItem.storePromise({
-          source: output.source,
-          info: output.info,
-          filename: output.filename,
-          warnings: output.warnings,
-          errors: output.errors,
-        });
-      }
+      const { name, getOutput } = asset;
+      const output = await getOutput();
 
       compilation.warnings = [
         ...compilation.warnings,
@@ -380,13 +350,13 @@ class ImageMinimizerPlugin {
       if (compilation.getAsset(output.filename)) {
         compilation.updateAsset(
           output.filename,
-          /** @type {Source} */ (output.source),
+          /** @type {Source} */ new RawSource(output.data),
           output.info,
         );
       } else {
         compilation.emitAsset(
           output.filename,
-          /** @type {Source} */ (output.source),
+          /** @type {Source} */ new RawSource(output.data),
           output.info,
         );
 

@@ -2,11 +2,12 @@ const path = require("path");
 
 const worker = require("./worker");
 const schema = require("./loader-options.json");
-const { isAbsoluteURL } = require("./utils.js");
+const { isAbsoluteURL, provideFromCache } = require("./utils.js");
 
 /** @typedef {import("schema-utils/declarations/validate").Schema} Schema */
 /** @typedef {import("webpack").Compilation} Compilation */
-/** @typedef {import("./utils").WorkerResult} WorkerResult */
+/** @typedef {import("./index").WorkerResult} WorkerResult */
+/** @typedef {import("./index").CachedResult} CachedResult */
 
 /**
  * @template T
@@ -30,14 +31,13 @@ const { isAbsoluteURL } = require("./utils.js");
 /**
  * @template T
  * @param {import("webpack").LoaderContext<LoaderOptions<T>>} loaderContext
- * @param {boolean} isAbsolute
- * @param {WorkerResult} output
+ * @param {string} filename
  * @param {string} query
  */
-function changeResource(loaderContext, isAbsolute, output, query) {
-  loaderContext.resourcePath = isAbsolute
-    ? output.filename
-    : path.join(loaderContext.rootContext, output.filename);
+function changeResource(loaderContext, filename, query) {
+  loaderContext.resourcePath = isAbsoluteURL(filename)
+    ? filename
+    : path.join(loaderContext.rootContext, filename);
   loaderContext.resourceQuery = query;
 }
 
@@ -107,175 +107,179 @@ async function loader(content) {
   // @ts-ignore
   const options = this.getOptions(/** @type {Schema} */ (schema));
   const callback = this.async();
-  const { generator, minimizer, severityError } = options;
 
-  if (!minimizer && !generator) {
-    callback(
-      new Error(
+  try {
+    const { generator, minimizer, severityError } = options;
+
+    if (!minimizer && !generator) {
+      throw new Error(
         "Not configured 'minimizer' or 'generator' options, please setup them",
-      ),
-    );
-
-    return;
-  }
-
-  let transformer = minimizer;
-
-  const parsedQuery =
-    this.resourceQuery.length > 0
-      ? new URLSearchParams(this.resourceQuery)
-      : null;
-
-  if (parsedQuery) {
-    const presetName = parsedQuery.get("as");
-
-    if (presetName) {
-      if (!generator) {
-        callback(
-          new Error(
-            "Please specify the 'generator' option to use 'as' query param for generation purposes.",
-          ),
-        );
-
-        return;
-      }
-
-      const presets = generator.filter((item) => item.preset === presetName);
-
-      if (presets.length > 1) {
-        callback(
-          new Error(
-            "Found several identical preset names, the 'preset' option should be unique",
-          ),
-        );
-
-        return;
-      }
-
-      if (presets.length === 0) {
-        callback(
-          new Error(
-            `Can't find '${presetName}' preset in the 'generator' option`,
-          ),
-        );
-
-        return;
-      }
-
-      [transformer] = presets;
-    }
-  }
-
-  if (!transformer) {
-    callback(null, content);
-
-    return;
-  }
-
-  if (parsedQuery) {
-    const widthQuery = parsedQuery.get("width") ?? parsedQuery.get("w");
-    const heightQuery = parsedQuery.get("height") ?? parsedQuery.get("h");
-    const unitQuery = parsedQuery.get("unit") ?? parsedQuery.get("u");
-
-    if (widthQuery || heightQuery || unitQuery) {
-      if (Array.isArray(transformer)) {
-        transformer = processSizeQuery(
-          transformer,
-          widthQuery,
-          heightQuery,
-          unitQuery,
-        );
-      } else {
-        [transformer] = processSizeQuery(
-          [transformer],
-          widthQuery,
-          heightQuery,
-          unitQuery,
-        );
-      }
-    }
-  }
-
-  let isAbsolute = isAbsoluteURL(this.resourcePath);
-
-  const filename = isAbsolute
-    ? this.resourcePath
-    : path.relative(this.rootContext, this.resourcePath);
-
-  const minifyOptions =
-    /** @type {import("./index").InternalWorkerOptions<T>} */ ({
-      input: content,
-      filename,
-      severityError,
-      transformer,
-      generateFilename:
-        /** @type {Compilation} */
-        (this._compilation).getAssetPath.bind(this._compilation),
-    });
-
-  const output = await worker(minifyOptions);
-
-  if (output.errors && output.errors.length > 0) {
-    for (const error of output.errors) {
-      this.emitError(error);
+      );
     }
 
-    callback(null, content);
+    let transformer = minimizer;
 
-    return;
-  }
-
-  if (output.warnings && output.warnings.length > 0) {
-    for (const warning of output.warnings) {
-      this.emitWarning(warning);
-    }
-  }
-
-  // Change content of the data URI after minimizer
-  if (this._module?.resourceResolveData?.encodedContent) {
-    const isBase64 = /^base64$/i.test(
-      this._module.resourceResolveData.encoding,
-    );
-
-    this._module.resourceResolveData.encodedContent = isBase64
-      ? output.data.toString("base64")
-      : encodeURIComponent(output.data.toString("utf-8")).replace(
-          /[!'()*]/g,
-          (character) =>
-            `%${/** @type {number} */ (character.codePointAt(0)).toString(16)}`,
-        );
-  } else {
-    let query = this.resourceQuery;
+    const parsedQuery =
+      this.resourceQuery.length > 0
+        ? new URLSearchParams(this.resourceQuery)
+        : null;
 
     if (parsedQuery) {
-      // Remove query param from the bundle due we need that only for bundle purposes
-      for (const key of ["as", "width", "w", "height", "h"]) {
-        parsedQuery.delete(key);
+      const presetName = parsedQuery.get("as");
+
+      if (presetName) {
+        if (!generator) {
+          throw new Error(
+            "Please specify the 'generator' option to use 'as' query param for generation purposes.",
+          );
+        }
+
+        const presets = generator.filter((item) => item.preset === presetName);
+
+        if (presets.length > 1) {
+          throw new Error(
+            "Found several identical preset names, the 'preset' option should be unique",
+          );
+        }
+
+        if (presets.length === 0) {
+          throw new Error(
+            `Can't find '${presetName}' preset in the 'generator' option`,
+          );
+        }
+
+        [transformer] = presets;
+      }
+    }
+
+    if (!transformer) {
+      callback(null, content);
+
+      return;
+    }
+
+    if (parsedQuery) {
+      const widthQuery = parsedQuery.get("width") ?? parsedQuery.get("w");
+      const heightQuery = parsedQuery.get("height") ?? parsedQuery.get("h");
+      const unitQuery = parsedQuery.get("unit") ?? parsedQuery.get("u");
+
+      if (widthQuery || heightQuery || unitQuery) {
+        if (Array.isArray(transformer)) {
+          transformer = processSizeQuery(
+            transformer,
+            widthQuery,
+            heightQuery,
+            unitQuery,
+          );
+        } else {
+          [transformer] = processSizeQuery(
+            [transformer],
+            widthQuery,
+            heightQuery,
+            unitQuery,
+          );
+        }
+      }
+    }
+
+    const filename = isAbsoluteURL(this.resourcePath)
+      ? this.resourcePath
+      : path.relative(this.rootContext, this.resourcePath);
+
+    const { _compilation, _compiler } = this;
+
+    if (!_compilation || !_compiler) {
+      throw new Error("_compilation and/or _compiler unavailable");
+    }
+
+    // const logger = _compilation.getLogger("ImageMinimizerPlugin");
+    const cache = _compilation.getCache("ImageMinimizerWebpackPlugin");
+
+    const { RawSource } = _compiler.webpack.sources;
+
+    const output = await provideFromCache(
+      this.utils.absolutify(this.context, this.resourcePath),
+      new RawSource(content),
+      cache,
+      transformer,
+      () => {
+        const minifyOptions =
+          /** @type {import("./index").InternalWorkerOptions<T>} */ ({
+            input: content,
+            filename,
+            severityError,
+            transformer,
+            generateFilename: _compilation.getAssetPath.bind(_compilation),
+          });
+
+        return worker(minifyOptions);
+      },
+    );
+
+    if (output.errors && output.errors.length > 0) {
+      for (const error of output.errors) {
+        this.emitError(error);
       }
 
-      query = parsedQuery.toString();
-      query = query.length > 0 ? `?${query}` : "";
+      callback(null, content);
+      return;
     }
 
-    isAbsolute = isAbsoluteURL(output.filename);
-    // Old approach for `file-loader` and other old loaders
-    changeResource(this, isAbsolute, output, query);
-
-    // Change name of assets modules after generator
-    if (this._module && !this._module.matchResource) {
-      this._module.matchResource = `${output.filename}${query}`;
+    if (output.warnings && output.warnings.length > 0) {
+      for (const warning of output.warnings) {
+        this.emitWarning(warning);
+      }
     }
-  }
 
-  // TODO: search better API
-  if (this._module) {
-    this._module.buildMeta = {
-      ...this._module.buildMeta,
-      imageMinimizerPluginInfo: output.info,
-    };
-  }
+    // Change content of the data URI after minimizer
+    if (this._module?.resourceResolveData?.encodedContent) {
+      const isBase64 = /^base64$/i.test(
+        this._module.resourceResolveData.encoding,
+      );
 
-  callback(null, output.data);
+      this._module.resourceResolveData.encodedContent = isBase64
+        ? output.data.toString("base64")
+        : encodeURIComponent(output.data.toString("utf-8")).replace(
+            /[!'()*]/g,
+            (character) =>
+              `%${/** @type {number} */ (character.codePointAt(0)).toString(16)}`,
+          );
+    } else {
+      let query = this.resourceQuery;
+
+      if (parsedQuery) {
+        // Remove query param from the bundle due we need that only for bundle purposes
+        for (const key of ["as", "width", "w", "height", "h"]) {
+          parsedQuery.delete(key);
+        }
+
+        query = parsedQuery.toString();
+        query = query.length > 0 ? `?${query}` : "";
+      }
+
+      // Old approach for `file-loader` and other old loaders
+      changeResource(this, output.filename, query);
+
+      // Change name of assets modules after generator
+      if (this._module && !this._module.matchResource) {
+        this._module.matchResource = `${output.filename}${query}`;
+      }
+    }
+
+    // TODO: search better API
+    if (this._module) {
+      this._module.buildMeta = {
+        ...this._module.buildMeta,
+        imageMinimizerPluginInfo: output.info,
+      };
+    }
+
+    // eslint-disable-next-line node/callback-return
+    callback(null, output.data);
+  } catch (error) {
+    // eslint-disable-next-line node/callback-return
+    callback(/** @type {Error} */ (error));
+  }
 }
 
 loader.raw = true;
