@@ -7,6 +7,7 @@ export = ImageMinimizerPlugin;
 /** @typedef {import("webpack").Asset} Asset */
 /** @typedef {import("webpack").AssetInfo} AssetInfo */
 /** @typedef {import("webpack").sources.Source} Source */
+/** @typedef {import("webpack").Module} Module */
 /** @typedef {import("./utils.js").imageminMinify} ImageminMinifyFunction */
 /** @typedef {import("./utils.js").squooshMinify} SquooshMinifyFunction */
 /** @typedef {import("./utils.js").CachedResult} CachedResult */
@@ -181,6 +182,7 @@ declare namespace ImageMinimizerPlugin {
     Asset,
     AssetInfo,
     Source,
+    Module,
     ImageminMinifyFunction,
     SquooshMinifyFunction,
     CachedResult,
@@ -225,6 +227,7 @@ type WebpackError = import("webpack").WebpackError;
 type Asset = import("webpack").Asset;
 type AssetInfo = import("webpack").AssetInfo;
 type Source = import("webpack").sources.Source;
+type Module = import("webpack").Module;
 type ImageminMinifyFunction = typeof imageminMinify;
 type SquooshMinifyFunction = typeof squooshMinify;
 type CachedResult = import("./utils.js").CachedResult;

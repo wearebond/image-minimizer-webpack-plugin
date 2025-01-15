@@ -6,6 +6,8 @@ const path = require("path");
 /** @typedef {import("webpack").Compilation} Compilation */
 /** @typedef {import("webpack").sources.Source} Source */
 /** @typedef {import("webpack").WebpackError} WebpackError */
+/** @typedef {import("webpack").Module} Module */
+/** @typedef {import("webpack").AssetInfo} AssetInfo */
 
 /**
  * @typedef {WorkerResult} CachedResult
@@ -1295,6 +1297,9 @@ async function svgoMinify(original, minimizerOptions) {
   };
 }
 
+/** @type {WeakMap<Module, AssetInfo>} */
+const IMAGE_MINIMIZER_PLUGIN_INFO_MAPPINGS = new WeakMap();
+
 const getSerializeJavascript = memoize(() => require("serialize-javascript"));
 
 /** @type {Record<string, Promise<CachedResult>>} */
@@ -1357,4 +1362,7 @@ module.exports = {
   sharpMinify,
   sharpGenerate,
   svgoMinify,
+  IMAGE_MINIMIZER_PLUGIN_INFO_MAPPINGS,
+  ABSOLUTE_URL_REGEX,
+  WINDOWS_PATH_REGEX,
 };

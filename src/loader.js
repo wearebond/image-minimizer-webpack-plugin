@@ -2,7 +2,12 @@ const path = require("path");
 
 const worker = require("./worker");
 const schema = require("./loader-options.json");
-const { isAbsoluteURL, provideFromCache } = require("./utils.js");
+const {
+  IMAGE_MINIMIZER_PLUGIN_INFO_MAPPINGS,
+  ABSOLUTE_URL_REGEX,
+  WINDOWS_PATH_REGEX,
+  provideFromCache,
+} = require("./utils.js");
 
 /** @typedef {import("schema-utils/declarations/validate").Schema} Schema */
 /** @typedef {import("webpack").Compilation} Compilation */
@@ -31,13 +36,15 @@ const { isAbsoluteURL, provideFromCache } = require("./utils.js");
 /**
  * @template T
  * @param {import("webpack").LoaderContext<LoaderOptions<T>>} loaderContext
- * @param {string} filename
+ * @param {WorkerResult} output
  * @param {string} query
  */
-function changeResource(loaderContext, filename, query) {
-  loaderContext.resourcePath = isAbsoluteURL(filename)
-    ? filename
-    : path.join(loaderContext.rootContext, filename);
+function changeResource(loaderContext, output, query) {
+  loaderContext.resourcePath =
+    ABSOLUTE_URL_REGEX.test(output.filename) &&
+    !WINDOWS_PATH_REGEX.test(output.filename)
+      ? output.filename
+      : path.relative(loaderContext.rootContext, output.filename);
   loaderContext.resourceQuery = query;
 }
 
@@ -97,9 +104,13 @@ function processSizeQuery(transformers, widthQuery, heightQuery, unitQuery) {
  */
 async function loader(content) {
   // Avoid optimize twice
+  const imageMinimizerPluginInfo = this._module
+    ? IMAGE_MINIMIZER_PLUGIN_INFO_MAPPINGS.get(this._module)
+    : undefined;
+
   if (
-    this._module?.buildMeta?.imageMinimizerPluginInfo?.minimized ||
-    this._module?.buildMeta?.imageMinimizerPluginInfo?.generated
+    imageMinimizerPluginInfo?.minimized ||
+    imageMinimizerPluginInfo?.generated
   ) {
     return content;
   }
@@ -182,9 +193,11 @@ async function loader(content) {
       }
     }
 
-    const filename = isAbsoluteURL(this.resourcePath)
-      ? this.resourcePath
-      : path.relative(this.rootContext, this.resourcePath);
+    const filename =
+      ABSOLUTE_URL_REGEX.test(this.resourcePath) &&
+      !WINDOWS_PATH_REGEX.test(this.resourcePath)
+        ? this.resourcePath
+        : path.relative(this.rootContext, this.resourcePath);
 
     const { _compilation, _compiler } = this;
 
@@ -258,7 +271,7 @@ async function loader(content) {
       }
 
       // Old approach for `file-loader` and other old loaders
-      changeResource(this, output.filename, query);
+      changeResource(this, output, query);
 
       // Change name of assets modules after generator
       if (this._module && !this._module.matchResource) {
@@ -268,10 +281,7 @@ async function loader(content) {
 
     // TODO: search better API
     if (this._module) {
-      this._module.buildMeta = {
-        ...this._module.buildMeta,
-        imageMinimizerPluginInfo: output.info,
-      };
+      IMAGE_MINIMIZER_PLUGIN_INFO_MAPPINGS.set(this._module, output.info);
     }
 
     // eslint-disable-next-line node/callback-return

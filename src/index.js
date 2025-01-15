@@ -16,6 +16,7 @@ const {
   sharpGenerate,
   svgoMinify,
   provideFromCache,
+  IMAGE_MINIMIZER_PLUGIN_INFO_MAPPINGS,
 } = require("./utils.js");
 
 /** @typedef {import("schema-utils/declarations/validate").Schema} Schema */
@@ -26,6 +27,7 @@ const {
 /** @typedef {import("webpack").Asset} Asset */
 /** @typedef {import("webpack").AssetInfo} AssetInfo */
 /** @typedef {import("webpack").sources.Source} Source */
+/** @typedef {import("webpack").Module} Module */
 /** @typedef {import("./utils.js").imageminMinify} ImageminMinifyFunction */
 /** @typedef {import("./utils.js").squooshMinify} SquooshMinifyFunction */
 /** @typedef {import("./utils.js").CachedResult} CachedResult */
@@ -439,7 +441,7 @@ class ImageMinimizerPlugin {
         compilation.hooks.moduleAsset.tap(
           { name: pluginName },
           (module, file) => {
-            const newInfo = module?.buildMeta?.imageMinimizerPluginInfo;
+            const newInfo = IMAGE_MINIMIZER_PLUGIN_INFO_MAPPINGS.get(module);
 
             if (newInfo) {
               const asset = /** @type {Asset} */ (compilation.getAsset(file));
@@ -453,8 +455,14 @@ class ImageMinimizerPlugin {
         compilation.hooks.assetPath.tap(
           { name: pluginName },
           (filename, data, info) => {
-            // @ts-ignore
-            const newInfo = data?.module?.buildMeta?.imageMinimizerPluginInfo;
+            const newInfo =
+              /** @type {{ module: Module }} */
+              (data)?.module
+                ? IMAGE_MINIMIZER_PLUGIN_INFO_MAPPINGS.get(
+                    /** @type {{ module: Module }} */
+                    (data).module,
+                  )
+                : undefined;
 
             if (info && newInfo) {
               Object.assign(info, newInfo);
